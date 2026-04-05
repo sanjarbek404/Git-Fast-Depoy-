@@ -1,0 +1,58 @@
+name: Deploy to GitHub Pages
+
+on:
+  # Kod main yoki master branchga push qilinganda avtomatik ishga tushadi
+  push:
+    branches:
+      - main
+      - master
+  # GitHub Actions sahifasidan qo'lda ishga tushirish uchun
+  workflow_dispatch:
+
+# GitHub Pages ga yozish huquqlarini berish
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Bir vaqtning o'zida faqat bitta deploy ishlashini ta'minlash
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  # 1-qadam: Loyihani yig'ish (Build)
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build project
+        run: npm run build
+
+      - name: Upload artifact for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  # 2-qadam: GitHub Pages ga joylash (Deploy)
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,5 @@
+{
+  "name": "FastDeploy",
+  "description": "A modern PWA to deploy local files and folders directly to GitHub repositories.",
+  "requestFramePermissions": []
+}
