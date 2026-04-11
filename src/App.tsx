@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   Github, Upload, History as HistoryIcon, LayoutDashboard, 
   Moon, Sun, Plus, CheckCircle2, AlertCircle, Loader2, 
@@ -54,16 +54,6 @@ interface RepoDetails {
 }
 
 // --- Mock Data ---
-const MOCK_ANALYTICS = [
-  { name: 'Du', deploys: 2 },
-  { name: 'Se', deploys: 5 },
-  { name: 'Ch', deploys: 3 },
-  { name: 'Pa', deploys: 10 },
-  { name: 'Ju', deploys: 7 },
-  { name: 'Sh', deploys: 4 },
-  { name: 'Ya', deploys: 8 },
-];
-
 const GITHUB_API_BASE = "https://api.github.com";
 
 // Helper for GitHub API calls
@@ -125,6 +115,9 @@ export default function App() {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Create Repo Modal State
+  const [showCreateRepo, setShowCreateRepo] = useState(false);
   
   // Update Repo Modal State
   const [updateModalRepo, setUpdateModalRepo] = useState<Repo | null>(null);
@@ -273,6 +266,29 @@ export default function App() {
     ? Math.round((history.filter(h => h.status === 'success').length / history.length) * 100) 
     : 0;
 
+  const analyticsData = useMemo(() => {
+    const days = ['Yak', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'];
+    const last7Days = Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      return {
+        date: d.toDateString(),
+        name: days[d.getDay()],
+        deploys: 0
+      };
+    });
+
+    history.forEach(item => {
+      const itemDate = new Date(item.timestamp).toDateString();
+      const dayData = last7Days.find(d => d.date === itemDate);
+      if (dayData) {
+        dayData.deploys++;
+      }
+    });
+
+    return last7Days;
+  }, [history]);
+
   if (isCheckingAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-950">
@@ -395,8 +411,12 @@ export default function App() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                       </div>
-                      <button onClick={fetchRepos} className="p-2 hover:bg-zinc-500/10 rounded-xl transition-colors text-zinc-500 hover:text-indigo-500">
+                      <button onClick={fetchRepos} className="p-2 hover:bg-zinc-500/10 rounded-xl transition-colors text-zinc-500 hover:text-indigo-500" title="Yangilash">
                         <Loader2 className={cn("h-5 w-5", loading && "animate-spin")} />
+                      </button>
+                      <button onClick={() => setShowCreateRepo(true)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold transition-colors flex items-center gap-2 text-sm shadow-lg shadow-indigo-500/20">
+                        <Plus className="h-4 w-4" />
+                        <span className="hidden sm:inline">Yangi Repo</span>
                       </button>
                     </div>
                   </div>
@@ -506,7 +526,7 @@ export default function App() {
                   
                   <div className="h-[400px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={MOCK_ANALYTICS} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <AreaChart data={analyticsData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                         <defs>
                           <linearGradient id="colorDeploys" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4}/>
@@ -724,6 +744,20 @@ export default function App() {
                 totalCount: data.totalCount
               });
               fetchRepos(); // Refresh the repos list
+            }}
+            onError={(msg) => setNotification({ message: msg, type: 'error' })}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Create Repo Modal */}
+      <AnimatePresence>
+        {showCreateRepo && (
+          <CreateRepoModal
+            onClose={() => setShowCreateRepo(false)}
+            onSuccess={() => {
+              setNotification({ message: "Yangi repozitoriy muvaffaqiyatli yaratildi!", type: 'success' });
+              fetchRepos();
             }}
             onError={(msg) => setNotification({ message: msg, type: 'error' })}
           />
@@ -1031,19 +1065,41 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode, label: string
 }
 
 function RepoCard({ repo, onUpdate }: { repo: Repo, onUpdate: (repo: Repo) => void }) {
+  const [copied, setCopied] = useState(false);
+
+  const copyUrl = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(repo.html_url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div className="glass-card p-6 rounded-3xl group flex flex-col h-full">
       <div className="flex items-start justify-between mb-4">
         <div className="p-3 rounded-xl bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900 shadow-inner">
           <FolderGit2 className="h-6 w-6 text-indigo-500" />
         </div>
-        <button 
-          onClick={(e) => { e.stopPropagation(); onUpdate(repo); }}
-          className="p-2 rounded-full bg-zinc-500/5 hover:bg-indigo-500/10 text-zinc-400 hover:text-indigo-500 transition-colors cursor-pointer"
-          title="Fayllarni yangilash"
-        >
-          <SettingsIcon className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button 
+            onClick={copyUrl}
+            className="p-2 rounded-full bg-zinc-500/5 hover:bg-indigo-500/10 text-zinc-400 hover:text-indigo-500 transition-colors cursor-pointer"
+            title="URL nusxalash"
+          >
+            {copied ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            )}
+          </button>
+          <button 
+            onClick={(e) => { e.stopPropagation(); onUpdate(repo); }}
+            className="p-2 rounded-full bg-zinc-500/5 hover:bg-indigo-500/10 text-zinc-400 hover:text-indigo-500 transition-colors cursor-pointer"
+            title="Fayllarni yangilash"
+          >
+            <SettingsIcon className="h-4 w-4" />
+          </button>
+        </div>
       </div>
       <h3 className="font-bold text-lg truncate mb-2">{repo.name}</h3>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 line-clamp-2 flex-grow">
@@ -1968,7 +2024,7 @@ function HistoryTimelineItem({ item }: { item: DeployHistory }) {
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <Zap className="h-4 w-4 text-indigo-500" />
-                  <span className="text-xs font-bold text-zinc-500 uppercase">AI Commit Xabari</span>
+                  <span className="text-xs font-bold text-zinc-500 uppercase">Commit Xabari</span>
                 </div>
                 <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{item.commitMessage}</p>
               </div>
@@ -1982,6 +2038,116 @@ function HistoryTimelineItem({ item }: { item: DeployHistory }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function CreateRepoModal({ 
+  onClose, 
+  onSuccess, 
+  onError 
+}: { 
+  onClose: () => void, 
+  onSuccess: () => void, 
+  onError: (msg: string) => void 
+}) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [autoInit, setAutoInit] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name) return;
+    setLoading(true);
+    try {
+      await githubApi('/user/repos', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          description,
+          private: isPrivate,
+          auto_init: autoInit
+        })
+      });
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      onError(err.message || "Repozitoriy yaratishda xatolik");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="glass-panel w-full max-w-lg rounded-3xl p-6 md:p-8 relative"
+      >
+        <button onClick={onClose} className="absolute top-6 right-6 p-2 rounded-full hover:bg-zinc-500/10 text-zinc-500 transition-colors">
+          <X className="h-5 w-5" />
+        </button>
+        
+        <h2 className="text-2xl font-bold mb-2">Yangi Repozitoriy</h2>
+        <p className="text-zinc-500 mb-6">GitHub hisobingizda yangi repozitoriy yarating.</p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">Nomi <span className="text-rose-500">*</span></label>
+            <input 
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="my-awesome-project"
+              className="w-full px-4 py-3 rounded-xl glass-input"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">Tavsif (ixtiyoriy)</label>
+            <input 
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Loyiha haqida qisqacha..."
+              className="w-full px-4 py-3 rounded-xl glass-input"
+            />
+          </div>
+          
+          <div className="flex items-center gap-4 pt-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={isPrivate} 
+                onChange={(e) => setIsPrivate(e.target.checked)}
+                className="rounded text-indigo-500 focus:ring-indigo-500 bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+              />
+              <span className="text-sm font-medium">Private (Yopiq)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={autoInit} 
+                onChange={(e) => setAutoInit(e.target.checked)}
+                className="rounded text-indigo-500 focus:ring-indigo-500 bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+              />
+              <span className="text-sm font-medium">README bilan boshlash</span>
+            </label>
+          </div>
+
+          <button 
+            type="submit"
+            disabled={!name || loading}
+            className="w-full mt-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-5 w-5" />}
+            Yaratish
+          </button>
+        </form>
+      </motion.div>
     </div>
   );
 }
