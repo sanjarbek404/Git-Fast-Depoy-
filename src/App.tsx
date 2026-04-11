@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { cn } from './lib/utils';
 import JSZip from 'jszip';
+import ignore from 'ignore';
 
 // --- Types ---
 interface Repo {
@@ -1164,7 +1165,7 @@ const executeDeploy = async (
   setProgress(5);
 
   // 1. Process files into Uint8Array
-  const filesToProcess: { path: string, content: Uint8Array, sha?: string }[] = [];
+  let filesToProcess: { path: string, content: Uint8Array, sha?: string }[] = [];
   
   for (const file of files) {
     if (file.name.endsWith('.zip')) {
@@ -1199,13 +1200,43 @@ const executeDeploy = async (
       filesToProcess.push(...extracted);
     } else {
       const uint8array = await readFileAsUint8Array(file);
-      const path = file.webkitRelativePath || file.name;
+      let path = file.webkitRelativePath || file.name;
+      
+      // Strip root folder from webkitRelativePath if it exists
+      if (file.webkitRelativePath) {
+        const parts = path.split('/');
+        if (parts.length > 1) {
+          path = parts.slice(1).join('/');
+        }
+      }
+      
       filesToProcess.push({ path, content: uint8array });
     }
   }
 
   if (filesToProcess.length === 0) {
     throw new Error("Yuklash uchun fayllar topilmadi. Zip fayl bo'sh bo'lishi mumkin.");
+  }
+
+  // 1.5 Apply .gitignore rules
+  try {
+    const gitignoreEntry = filesToProcess.find(f => f.path === '.gitignore');
+    const ig = ignore().add(['.git', 'node_modules', 'dist', 'build', '.env', '.DS_Store']);
+    
+    if (gitignoreEntry) {
+      const text = new TextDecoder().decode(gitignoreEntry.content);
+      ig.add(text);
+    }
+    
+    filesToProcess = filesToProcess.filter(f => {
+      return !ig.ignores(f.path.replace(/^\//, ''));
+    });
+  } catch (err) {
+    console.error("Error applying gitignore in executeDeploy:", err);
+  }
+
+  if (filesToProcess.length === 0) {
+    throw new Error("Barcha fayllar .gitignore orqali chetlab o'tilgan yoki fayllar topilmadi.");
   }
 
   setProgress(15);
@@ -1849,22 +1880,68 @@ function DeployForm({ onSuccess, onError, onAllFinished }: { onSuccess: (data: a
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Fayllar ({job.files.length})</label>
                   {job.status !== 'success' && (
-                    <label className={cn(
-                      "text-xs font-bold text-indigo-500 cursor-pointer hover:underline",
-                      isDeploying && "opacity-50 pointer-events-none"
-                    )}>
-                      Fayl qo'shish
-                      <input 
-                        type="file" 
-                        multiple 
-                        className="hidden" 
-                        onChange={(e) => {
-                          if (e.target.files?.length) {
-                            updateJob(job.id, { files: [...job.files, ...Array.from(e.target.files)] });
-                          }
-                        }}
-                      />
-                    </label>
+                    <div className="flex items-center gap-3">
+                      <label className={cn(
+                        "text-xs font-bold text-indigo-500 cursor-pointer hover:underline flex items-center gap-1",
+                        isDeploying && "opacity-50 pointer-events-none"
+                      )}>
+                        <FileIcon className="h-3 w-3" /> Fayl
+                        <input 
+                          type="file" 
+                          multiple 
+                          className="hidden" 
+                          onChange={async (e) => {
+                            if (e.target.files?.length) {
+                              const newFiles = Array.from(e.target.files);
+                              updateJob(job.id, { files: [...job.files, ...newFiles] });
+                            }
+                          }}
+                        />
+                      </label>
+                      <label className={cn(
+                        "text-xs font-bold text-indigo-500 cursor-pointer hover:underline flex items-center gap-1",
+                        isDeploying && "opacity-50 pointer-events-none"
+                      )}>
+                        <FolderGit2 className="h-3 w-3" /> Papka
+                        <input 
+                          type="file" 
+                          multiple 
+                          {...{ webkitdirectory: "", directory: "" } as any}
+                          className="hidden" 
+                          onChange={async (e) => {
+                            if (e.target.files?.length) {
+                              const newFiles = Array.from(e.target.files);
+                              
+                              // Find .gitignore
+                              const gitignoreFile = newFiles.find(f => f.name === '.gitignore' || f.webkitRelativePath.endsWith('.gitignore'));
+                              
+                              let filteredFiles = newFiles;
+                              try {
+                                const ig = ignore().add(['.git', 'node_modules', 'dist', 'build', '.env', '.DS_Store']);
+                                
+                                if (gitignoreFile) {
+                                  const text = await gitignoreFile.text();
+                                  ig.add(text);
+                                }
+                                
+                                filteredFiles = newFiles.filter(f => {
+                                  const path = f.webkitRelativePath || f.name;
+                                  // Remove the root folder name from webkitRelativePath for correct ignore matching
+                                  const parts = path.split('/');
+                                  const relativePath = parts.length > 1 ? parts.slice(1).join('/') : path;
+                                  
+                                  return !ig.ignores(relativePath) && !ig.ignores(path);
+                                });
+                              } catch (err) {
+                                console.error("Error parsing gitignore:", err);
+                              }
+                              
+                              updateJob(job.id, { files: [...job.files, ...filteredFiles] });
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
                   )}
                 </div>
 
