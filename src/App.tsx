@@ -41,6 +41,7 @@ interface DeployJob {
   id: string;
   repoName: string;
   branch: string;
+  commitMessage: string;
   files: File[];
   status: 'idle' | 'uploading' | 'processing' | 'success' | 'error';
   progress: number;
@@ -98,6 +99,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
@@ -289,6 +291,11 @@ export default function App() {
     />;
   }
 
+  const filteredRepos = repos.filter(repo => 
+    repo.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    (repo.description && repo.description.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
   return (
     <div className="min-h-screen relative overflow-hidden font-sans">
       {/* Animated Background Gradients */}
@@ -373,15 +380,29 @@ export default function App() {
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between mb-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <h2 className="text-2xl font-bold">Barcha Repozitoriylar</h2>
-                    <button onClick={fetchRepos} className="p-2 hover:bg-zinc-500/10 rounded-xl transition-colors text-zinc-500 hover:text-indigo-500">
-                      <Loader2 className={cn("h-5 w-5", loading && "animate-spin")} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <div className="relative">
+                        <input 
+                          type="text" 
+                          placeholder="Qidirish..." 
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-10 pr-4 py-2 rounded-xl glass-input text-sm w-full sm:w-64"
+                        />
+                        <svg className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                      </div>
+                      <button onClick={fetchRepos} className="p-2 hover:bg-zinc-500/10 rounded-xl transition-colors text-zinc-500 hover:text-indigo-500">
+                        <Loader2 className={cn("h-5 w-5", loading && "animate-spin")} />
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {repos.map((repo, i) => (
+                    {filteredRepos.map((repo, i) => (
                       <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -393,11 +414,11 @@ export default function App() {
                         <RepoCard repo={repo} onUpdate={(r) => setUpdateModalRepo(r)} />
                       </motion.div>
                     ))}
-                    {repos.length === 0 && !loading && (
+                    {filteredRepos.length === 0 && !loading && (
                       <div className="col-span-full py-16 text-center glass-panel rounded-3xl border-dashed border-2">
                         <Github className="h-16 w-16 mx-auto mb-4 text-zinc-400" />
                         <h3 className="text-xl font-semibold mb-2">Repozitoriylar topilmadi</h3>
-                        <p className="text-zinc-500">GitHub hisobingizda repozitoriylar yo'q yoki token xato kiritilgan.</p>
+                        <p className="text-zinc-500">Bunday nomdagi repozitoriy yo'q yoki token xato kiritilgan.</p>
                       </div>
                     )}
                   </div>
@@ -831,7 +852,7 @@ function SetupScreen({
               GitHub'ga yuboring.
             </h1>
             <p className="text-lg md:text-xl text-zinc-500 max-w-2xl mx-auto mb-10 leading-relaxed">
-              FastDeploy — bu loyihalaringizni oson va tezkor tarzda GitHub'ga joylash uchun yaratilgan aqlli vosita. AI yordamida avtomatik commit xabarlari va aqlli fayl tahlili.
+              FastDeploy — bu loyihalaringizni oson va tezkor tarzda GitHub'ga joylash uchun yaratilgan aqlli vosita. Ommaviy yuklash va aqlli fayl tahlili yordamida vaqtingizni tejang.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <button 
@@ -859,9 +880,9 @@ function SetupScreen({
               desc="Faqat o'zgargan fayllar yuklanadi. Tizim avtomatik ravishda fayllarni solishtiradi va vaqtingizni tejaydi."
             />
             <FeatureCard 
-              icon={<Zap className="h-8 w-8 text-indigo-500" />}
-              title="AI Commit Xabarlari"
-              desc="Gemini AI yordamida o'zgarishlar tahlil qilinib, professional commit xabarlari avtomatik yoziladi."
+              icon={<FolderGit2 className="h-8 w-8 text-indigo-500" />}
+              title="Ommaviy Yuklash"
+              desc="Bir vaqtning o'zida bir nechta repozitoriylarga fayllarni yuklang va boshqaring."
             />
             <FeatureCard 
               icon={<ShieldCheck className="h-8 w-8 text-emerald-500" />}
@@ -1079,6 +1100,7 @@ const executeDeploy = async (
   repoName: string,
   branch: string,
   files: File[],
+  customCommitMessage: string,
   setProgress: (p: number) => void,
   setStatus: (s: 'idle' | 'uploading' | 'processing') => void
 ) => {
@@ -1215,45 +1237,34 @@ const executeDeploy = async (
     throw new Error("Barcha fayllar bir xil, o'zgarish yo'q!");
   }
 
-  // 7. Upload ONLY changed files
+  // 7. Upload ONLY changed files (Parallelized for speed)
   const treeItems: any[] = [];
-  for (let i = 0; i < filesToUpload.length; i++) {
-    const file = filesToUpload[i];
-    const base64Content = arrayBufferToBase64(file.content);
-    const blobRes = await githubApi(`/repos/${owner}/${safeRepoName}/git/blobs`, {
-      method: 'POST',
-      body: JSON.stringify({
-        content: base64Content,
-        encoding: 'base64'
-      })
-    });
-    treeItems.push({
-      path: file.path,
-      mode: '100644',
-      type: 'blob',
-      sha: blobRes.sha
-    });
-    setProgress(50 + Math.floor((i / filesToUpload.length) * 30));
+  const chunkSize = 5; // Upload 5 files concurrently
+  for (let i = 0; i < filesToUpload.length; i += chunkSize) {
+    const chunk = filesToUpload.slice(i, i + chunkSize);
+    await Promise.all(chunk.map(async (file) => {
+      const base64Content = arrayBufferToBase64(file.content);
+      const blobRes = await githubApi(`/repos/${owner}/${safeRepoName}/git/blobs`, {
+        method: 'POST',
+        body: JSON.stringify({
+          content: base64Content,
+          encoding: 'base64'
+        })
+      });
+      treeItems.push({
+        path: file.path,
+        mode: '100644',
+        type: 'blob',
+        sha: blobRes.sha
+      });
+    }));
+    setProgress(50 + Math.floor(((i + chunk.length) / filesToUpload.length) * 30));
   }
 
   setStatus('processing');
 
-  // 8. Smart Commit Message via Backend
-  let commitMessage = "Deploy from FastDeploy";
-  try {
-    const res = await fetch('/api/generate-commit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ changedFiles: filesToUpload.map(f => f.path) })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.message) commitMessage = data.message;
-    }
-  } catch (e) {
-    console.error("AI commit generation failed", e);
-    commitMessage = `${filesToUpload.length} ta fayl yangilandi`;
-  }
+  // 8. Commit Message
+  let commitMessage = customCommitMessage.trim() || `Deploy from FastDeploy (${filesToUpload.length} ta fayl yangilandi)`;
 
   setProgress(85);
 
@@ -1323,6 +1334,7 @@ function UpdateRepoModal({
   onError: (msg: string) => void 
 }) {
   const [branch, setBranch] = useState(repo.default_branch || 'main');
+  const [commitMessage, setCommitMessage] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing'>('idle');
@@ -1341,7 +1353,7 @@ function UpdateRepoModal({
     if (files.length === 0) return;
 
     try {
-      const result = await executeDeploy(repo.name, branch, files, setProgress, setStatus);
+      const result = await executeDeploy(repo.name, branch, files, commitMessage, setProgress, setStatus);
       setTimeout(() => {
         onSuccess(result);
         onClose();
@@ -1371,15 +1383,27 @@ function UpdateRepoModal({
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">Branch (Tarmoq)</label>
-            <input 
-              type="text"
-              value={branch}
-              onChange={(e) => setBranch(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl glass-input"
-              required
-            />
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">Branch (Tarmoq)</label>
+              <input 
+                type="text"
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl glass-input"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">Commit xabari (ixtiyoriy)</label>
+              <input 
+                type="text"
+                value={commitMessage}
+                onChange={(e) => setCommitMessage(e.target.value)}
+                placeholder="Fayllar yangilandi"
+                className="w-full px-4 py-3 rounded-xl glass-input"
+              />
+            </div>
           </div>
 
           <div 
@@ -1595,13 +1619,13 @@ function WelcomeStep({ icon, title, desc }: { icon: React.ReactNode, title: stri
 
 function DeployForm({ onSuccess, onError, onAllFinished }: { onSuccess: (data: any) => void; onError: (msg: string) => void; onAllFinished?: () => void }) {
   const [jobs, setJobs] = useState<DeployJob[]>([
-    { id: Math.random().toString(36).substr(2, 9), repoName: '', branch: 'main', files: [], status: 'idle', progress: 0 }
+    { id: Math.random().toString(36).substr(2, 9), repoName: '', branch: 'main', commitMessage: '', files: [], status: 'idle', progress: 0 }
   ]);
   const [isDeploying, setIsDeploying] = useState(false);
 
   const addJob = () => {
     if (jobs.length >= 10) return;
-    setJobs([...jobs, { id: Math.random().toString(36).substr(2, 9), repoName: '', branch: 'main', files: [], status: 'idle', progress: 0 }]);
+    setJobs([...jobs, { id: Math.random().toString(36).substr(2, 9), repoName: '', branch: 'main', commitMessage: '', files: [], status: 'idle', progress: 0 }]);
   };
 
   const duplicateJob = (job: DeployJob) => {
@@ -1617,7 +1641,7 @@ function DeployForm({ onSuccess, onError, onAllFinished }: { onSuccess: (data: a
 
   const clearAll = () => {
     if (isDeploying) return;
-    setJobs([{ id: Math.random().toString(36).substr(2, 9), repoName: '', branch: 'main', files: [], status: 'idle', progress: 0 }]);
+    setJobs([{ id: Math.random().toString(36).substr(2, 9), repoName: '', branch: 'main', commitMessage: '', files: [], status: 'idle', progress: 0 }]);
   };
 
   const removeJob = (id: string) => {
@@ -1648,6 +1672,7 @@ function DeployForm({ onSuccess, onError, onAllFinished }: { onSuccess: (data: a
           job.repoName, 
           job.branch, 
           job.files, 
+          job.commitMessage,
           (p) => updateJob(job.id, { progress: p }),
           (s) => updateJob(job.id, { status: s })
         );
@@ -1728,7 +1753,7 @@ function DeployForm({ onSuccess, onError, onAllFinished }: { onSuccess: (data: a
                 )}
               </div>
 
-              <div className="grid md:grid-cols-2 gap-6 mb-6">
+              <div className="grid md:grid-cols-3 gap-6 mb-6">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Repo Nomi</label>
                   <input 
@@ -1747,6 +1772,17 @@ function DeployForm({ onSuccess, onError, onAllFinished }: { onSuccess: (data: a
                     value={job.branch}
                     onChange={(e) => updateJob(job.id, { branch: e.target.value })}
                     placeholder="main"
+                    className="w-full px-4 py-3 rounded-xl glass-input text-sm"
+                    disabled={isDeploying || job.status === 'success'}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Commit xabari</label>
+                  <input 
+                    type="text" 
+                    value={job.commitMessage}
+                    onChange={(e) => updateJob(job.id, { commitMessage: e.target.value })}
+                    placeholder="Fayllar yangilandi"
                     className="w-full px-4 py-3 rounded-xl glass-input text-sm"
                     disabled={isDeploying || job.status === 'success'}
                   />
